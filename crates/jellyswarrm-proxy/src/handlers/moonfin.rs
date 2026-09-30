@@ -64,29 +64,67 @@ fn seerr_routes() -> Router<AppState> {
 pub struct MoonfinUser(pub User);
 
 impl FromRequestParts<AppState> for MoonfinUser {
-    type Rejection = StatusCode;
+    type Rejection = Response;
 
-    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, StatusCode> {
-        let identity = resolve_request_identity_from_headers_uri(&parts.headers, &parts.uri, state)
+    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Response> {
+        let unauthorized = || {
+            error_response(
+                StatusCode::UNAUTHORIZED,
+                json!({ "error": "User not authenticated", "success": false }),
+            )
+        };
+        // Moonfin's Seerr client sends `Authorization: MediaBrowser Token="…"`
+        // without the device fields the shared parser requires. Jellyfin
+        // accepts that, so present the token the way the parser understands.
+        let mut headers = parts.headers.clone();
+        if let Some(token) = headers
+            .get(header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .filter(|value| crate::models::Authorization::parse(value).is_err())
+            .and_then(token_only_authorization)
+        {
+            headers.remove(header::AUTHORIZATION);
+            if let Ok(value) = HeaderValue::from_str(&token) {
+                headers.insert("X-MediaBrowser-Token", value);
+            }
+        }
+
+        let identity = resolve_request_identity_from_headers_uri(&headers, &parts.uri, state)
             .await
-            .map_err(|_| StatusCode::UNAUTHORIZED)?;
-        let user = identity.user.ok_or(StatusCode::UNAUTHORIZED)?;
+            .map_err(|_| unauthorized())?;
+        let user = identity.user.ok_or_else(unauthorized)?;
         let token = identity
             .auth
             .as_ref()
             .and_then(|auth| auth.token_ref())
-            .ok_or(StatusCode::UNAUTHORIZED)?;
+            .ok_or_else(unauthorized)?;
         if !matches!(parts.method, Method::GET | Method::HEAD)
             && state
                 .user_authorization
                 .is_read_only_api_key(token)
                 .await
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?
         {
-            return Err(StatusCode::FORBIDDEN);
+            return Err(error_response(
+                StatusCode::FORBIDDEN,
+                json!({ "error": "This API key is read-only", "success": false }),
+            ));
         }
         Ok(Self(user))
     }
+}
+
+/// The `Token` value of a `MediaBrowser`/`Emby` authorization header.
+fn token_only_authorization(value: &str) -> Option<String> {
+    let (scheme, params) = value.trim().split_once(char::is_whitespace)?;
+    if !scheme.eq_ignore_ascii_case("MediaBrowser") && !scheme.eq_ignore_ascii_case("Emby") {
+        return None;
+    }
+    params.split(',').find_map(|param| {
+        let (key, value) = param.trim().split_once('=')?;
+        let token = value.trim().trim_matches('"');
+        (key.trim().eq_ignore_ascii_case("Token") && !token.is_empty()).then(|| token.to_string())
+    })
 }
 
 struct SeerrSettings {

@@ -211,6 +211,68 @@ async fn moonfin_requires_an_authenticated_user() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    // Moonfin only shows a reason when the body carries `error`.
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["error"], "User not authenticated");
+}
+
+/// Moonfin's Seerr client authenticates with the token alone.
+fn token_only(f: &Fixture) -> String {
+    format!("MediaBrowser Token=\"{}\"", f.user.virtual_key)
+}
+
+#[tokio::test]
+async fn token_only_authorization_can_log_in_and_proxy() {
+    let f = Fixture::new(true).await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/auth/jellyfin"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .append_header("Set-Cookie", "connect.sid=s%3Aabc; Path=/")
+                .set_body_json(json!({ "id": 5 })),
+        )
+        .mount(&f.seerr)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/auth/me"))
+        .and(header("Cookie", "connect.sid=s%3Aabc"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": 5 })))
+        .mount(&f.seerr)
+        .await;
+
+    let login = f
+        .client
+        .post(format!("{}/Moonfin/Seerr/Login", f.url))
+        .header("Authorization", token_only(&f))
+        .json(&json!({ "username": "alice", "password": "pw", "authType": "jellyfin" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(login.status(), StatusCode::OK);
+
+    let me = f
+        .client
+        .get(format!("{}/Moonfin/Seerr/Api/auth/me", f.url))
+        .header("Authorization", token_only(&f))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(me.status(), StatusCode::OK);
+    assert_eq!(me.json::<Value>().await.unwrap()["id"], 5);
+}
+
+#[test]
+fn token_only_authorization_header_is_parsed() {
+    assert_eq!(
+        token_only_authorization("MediaBrowser Token=\"abc\""),
+        Some("abc".into())
+    );
+    assert_eq!(
+        token_only_authorization("Emby Client=\"x\", token=\"def\""),
+        Some("def".into())
+    );
+    assert_eq!(token_only_authorization("Bearer abc"), None);
+    assert_eq!(token_only_authorization("MediaBrowser Token=\"\""), None);
 }
 
 #[tokio::test]
