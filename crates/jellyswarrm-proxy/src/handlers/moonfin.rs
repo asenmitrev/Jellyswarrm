@@ -128,10 +128,12 @@ fn storage_error(error: sqlx::Error) -> Response {
 
 async fn ping(State(state): State<AppState>, MoonfinUser(_): MoonfinUser) -> Json<Value> {
     let settings = seerr_settings(&state).await;
+    // `settingsSyncEnabled` is deliberately omitted: Moonfin clients treat an
+    // explicit `false` as "plugin unavailable" and switch Seerr off with it.
+    // Without it they probe the settings endpoints, get 404s and skip syncing.
     Json(json!({
         "installed": true,
         "version": env!("CARGO_PKG_VERSION"),
-        "settingsSyncEnabled": false,
         "serverName": settings.server_name,
         "seerrEnabled": settings.url.is_some(),
         "seerrUrl": settings.url,

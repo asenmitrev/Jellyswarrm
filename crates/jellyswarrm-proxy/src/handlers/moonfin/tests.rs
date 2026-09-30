@@ -143,12 +143,27 @@ impl Fixture {
 async fn ping_and_config_report_seerr_when_enabled() {
     let f = Fixture::new(true).await;
 
-    let (status, ping) = f.get_json("/Moonfin/Ping").await;
-    assert_eq!(status, StatusCode::OK);
+    // The exact header shape Moonfin's plugin probe sends.
+    let response = f
+        .client
+        .get(format!("{}/Moonfin/Ping", f.url))
+        .header(
+            "Authorization",
+            format!(
+                "MediaBrowser Client=\"Moonfin\", Device=\"Pixel\", DeviceId=\"abc\", Version=\"1.0.0\", Token=\"{}\"",
+                f.user.virtual_key
+            ),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let ping: Value = response.json().await.unwrap();
     assert_eq!(ping["installed"], true);
     assert_eq!(ping["seerrEnabled"], true);
     assert_eq!(ping["seerrUrl"], f.seerr.uri());
-    assert_eq!(ping["settingsSyncEnabled"], false);
+    // Moonfin treats an explicit `false` here as "plugin unavailable".
+    assert!(ping.get("settingsSyncEnabled").is_none());
 
     for path in ["/Moonfin/Seerr/Config", "/Moonfin/Jellyseerr/Config"] {
         let (status, config) = f.get_json(path).await;
