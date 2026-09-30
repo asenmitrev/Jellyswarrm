@@ -20,6 +20,19 @@
       <input type="checkbox" role="switch" name="deduplicate_media" value="true" {% if deduplicate_media %}checked{% endif %}>
     </label>
   </fieldset>
+  <fieldset>
+    <legend>Seerr for Moonfin clients</legend>
+    <label>Enable Seerr
+      <input type="checkbox" role="switch" name="seerr_enabled" value="true" {% if seerr_enabled %}checked{% endif %}>
+    </label>
+    <label>Seerr URL
+      <input type="url" name="seerr_url" value="{{ seerr_url }}" placeholder="http://seerr:5055">
+    </label>
+    <label>Display Name
+      <input type="text" name="seerr_display_name" value="{{ seerr_display_name }}" placeholder="Seerr">
+    </label>
+    <p style="font-size:.75rem; opacity:.7;">Seerr must be connected to this Jellyswarrm instance. Jellyswarrm reaches Seerr at this URL, and Moonfin clients are also given it.</p>
+  </fieldset>
   <div style="display:flex; gap:.5rem;">
     <button type="submit">Save</button>
     <button type="button" hx-get="/{{ ui_route }}/settings/form" hx-target="#settings-form" class="secondary">Reset</button>

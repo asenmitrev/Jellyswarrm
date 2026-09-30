@@ -43,6 +43,7 @@ mod models;
 mod processors;
 mod proxy_headers;
 mod request_preprocessing;
+mod seerr_sessions;
 mod server_id;
 mod server_storage;
 mod server_url;
@@ -786,6 +787,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "/Artists",
                 Router::new().route("/", get(handlers::federated::get_items_from_all_servers)),
             )
+            // Moonfin companion plugin API (Seerr subset)
+            .nest("/Moonfin", handlers::moonfin::routes())
             .route("/{*path}", any(proxy_handler))
             .fallback(proxy_handler)
             .layer(

@@ -43,6 +43,7 @@ Jellyswarrm is a reverse proxy that lets you combine multiple Jellyfin servers i
 * **API Compatibility** – Appears as a normal Jellyfin server, so existing apps and tools still work.
 * **Server Federation** – Automatically sync users across connected servers.
 * **User Page** – Personal dashboard for managing credentials and libraries. 
+* **Moonfin Seerr** – Moonfin clients can discover, request, and sign in to Seerr through Jellyswarrm, with no Moonfin server plugin needed. Connect Seerr to Jellyswarrm, then enable it and set its URL under **Settings → Seerr for Moonfin clients**. Other Moonfin plugin features, such as settings sync, themes, and ratings, are not provided.
 
 ### ⚠️ In Progress
 

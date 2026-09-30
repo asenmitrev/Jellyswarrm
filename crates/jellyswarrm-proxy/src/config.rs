@@ -338,6 +338,31 @@ pub struct AppConfig {
         alias = "deduplicate_movies"
     )]
     pub deduplicate_media: bool,
+
+    /// Serve the Seerr part of the Moonfin plugin API so Moonfin clients can
+    /// reach a Seerr instance through Jellyswarrm.
+    #[serde(default)]
+    pub seerr_enabled: bool,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seerr_url: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seerr_display_name: Option<String>,
+}
+
+impl AppConfig {
+    /// The Seerr base URL without a trailing slash, only when the integration is enabled.
+    pub fn effective_seerr_url(&self) -> Option<String> {
+        if !self.seerr_enabled {
+            return None;
+        }
+        self.seerr_url
+            .as_deref()
+            .map(|url| url.trim().trim_end_matches('/'))
+            .filter(|url| !url.is_empty())
+            .map(str::to_string)
+    }
 }
 
 impl fmt::Debug for AppConfig {
@@ -371,6 +396,9 @@ impl fmt::Debug for AppConfig {
                 &self.auto_create_users_on_login,
             )
             .field("deduplicate_media", &self.deduplicate_media)
+            .field("seerr_enabled", &self.seerr_enabled)
+            .field("seerr_url", &self.seerr_url)
+            .field("seerr_display_name", &self.seerr_display_name)
             .finish()
     }
 }

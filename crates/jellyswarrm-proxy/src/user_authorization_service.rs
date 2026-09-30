@@ -494,6 +494,7 @@ pub struct UserAuthorizationService {
     pool: SqlitePool,
     mapping_key: Option<MappingEncryptionKey>,
     session_key: Option<MappingEncryptionKey>,
+    seerr_key: Option<MappingEncryptionKey>,
     legacy_admin_key: Option<HashedPassword>,
 }
 
@@ -536,6 +537,7 @@ impl UserAuthorizationService {
             pool,
             mapping_key: Some(mapping_key),
             session_key: None,
+            seerr_key: None,
             legacy_admin_key: Some(legacy_admin_key),
         }
     }
@@ -546,6 +548,9 @@ impl UserAuthorizationService {
             pool,
             mapping_key: None,
             session_key: None,
+            seerr_key: Some(
+                MappingEncryptionKey::for_seerr_sessions(&[7u8; 64]).expect("test key derivation"),
+            ),
             legacy_admin_key: None,
         }
     }
@@ -576,7 +581,15 @@ impl UserAuthorizationService {
         }
         tx.commit().await?;
         self.session_key = Some(key);
+        self.seerr_key = Some(
+            MappingEncryptionKey::for_seerr_sessions(secret)
+                .map_err(|e| sqlx::Error::Protocol(e.to_string()))?,
+        );
         Ok(())
+    }
+
+    pub fn seerr_sessions(&self) -> crate::seerr_sessions::SeerrSessionStore {
+        crate::seerr_sessions::SeerrSessionStore::new(self.pool.clone(), self.seerr_key.clone())
     }
 
     fn normalized_username_key(username: &str) -> String {

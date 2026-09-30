@@ -125,6 +125,10 @@ impl MappingEncryptionKey {
         Self::derive(session_key, b"jellyswarrm/authorization-session/v1")
     }
 
+    pub fn for_seerr_sessions(session_key: &[u8]) -> Result<Self, EncryptionError> {
+        Self::derive(session_key, b"jellyswarrm/seerr-session/v1")
+    }
+
     fn derive(session_key: &[u8], purpose: &[u8]) -> Result<Self, EncryptionError> {
         if session_key.len() < 32 {
             return Err(EncryptionError::EncryptionFailed(

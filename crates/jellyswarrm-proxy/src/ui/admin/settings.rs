@@ -25,6 +25,9 @@ pub struct SettingsFormTemplate {
     pub include_server_name_in_media: bool,
     pub auto_create_users_on_login: bool,
     pub deduplicate_media: bool,
+    pub seerr_enabled: bool,
+    pub seerr_url: String,
+    pub seerr_display_name: String,
     pub ui_route: String,
 }
 
@@ -50,6 +53,9 @@ pub async fn settings_form(State(state): State<AppState>) -> impl IntoResponse {
         include_server_name_in_media: cfg.include_server_name_in_media,
         auto_create_users_on_login: cfg.auto_create_users_on_login,
         deduplicate_media: cfg.deduplicate_media,
+        seerr_enabled: cfg.seerr_enabled,
+        seerr_url: cfg.seerr_url.unwrap_or_default(),
+        seerr_display_name: cfg.seerr_display_name.unwrap_or_default(),
         ui_route: state.get_ui_route().await,
     };
     match form.render() {
@@ -72,6 +78,33 @@ pub struct SaveForm {
     pub auto_create_users_on_login: bool,
     #[serde(default)]
     pub deduplicate_media: bool,
+    #[serde(default)]
+    pub seerr_enabled: bool,
+    #[serde(default)]
+    pub seerr_url: String,
+    #[serde(default)]
+    pub seerr_display_name: String,
+}
+
+fn settings_error(message: &str) -> Response {
+    Html(format!(
+        "<div id=\"settings-messages\" class=\"alert alert-error\">{message}</div>"
+    ))
+    .into_response()
+}
+
+/// Normalize the Seerr base URL; an empty value clears it.
+fn parse_seerr_url(input: &str) -> Result<Option<String>, &'static str> {
+    let trimmed = input.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    match url::Url::parse(trimmed) {
+        Ok(url) if matches!(url.scheme(), "http" | "https") && url.host().is_some() => {
+            Ok(Some(trimmed.to_string()))
+        }
+        _ => Err("Seerr URL must be an http(s) URL"),
+    }
 }
 
 pub async fn save_settings(State(state): State<AppState>, Form(form): Form<SaveForm>) -> Response {
@@ -81,6 +114,15 @@ pub async fn save_settings(State(state): State<AppState>, Form(form): Form<SaveF
         )
         .into_response();
     }
+    let seerr_url = match parse_seerr_url(&form.seerr_url) {
+        Ok(url) => url,
+        Err(message) => return settings_error(message),
+    };
+    if form.seerr_enabled && seerr_url.is_none() {
+        return settings_error("Seerr URL is required to enable Seerr");
+    }
+    let seerr_display_name =
+        Some(form.seerr_display_name.trim().to_string()).filter(|name| !name.is_empty());
 
     let save_result = {
         let mut cfg = state.config.write().await;
@@ -90,6 +132,9 @@ pub async fn save_settings(State(state): State<AppState>, Form(form): Form<SaveF
         updated.include_server_name_in_media = form.include_server_name_in_media;
         updated.auto_create_users_on_login = form.auto_create_users_on_login;
         updated.deduplicate_media = form.deduplicate_media;
+        updated.seerr_enabled = form.seerr_enabled;
+        updated.seerr_url = seerr_url;
+        updated.seerr_display_name = seerr_display_name;
         match save_config(&updated) {
             Ok(()) => {
                 *cfg = updated;
@@ -146,6 +191,9 @@ mod tests {
             include_server_name_in_media: false,
             auto_create_users_on_login: true,
             deduplicate_media: true,
+            seerr_enabled: false,
+            seerr_url: String::new(),
+            seerr_display_name: String::new(),
             ui_route: "admin".to_string(),
         }
         .render()
@@ -163,6 +211,9 @@ mod tests {
             include_server_name_in_media: false,
             auto_create_users_on_login: true,
             deduplicate_media: true,
+            seerr_enabled: false,
+            seerr_url: String::new(),
+            seerr_display_name: String::new(),
             ui_route: "admin".to_string(),
         }
         .render()
@@ -170,5 +221,16 @@ mod tests {
 
         assert!(html.contains("name=\"deduplicate_media\""));
         assert!(html.contains("name=\"deduplicate_media\" value=\"true\" checked"));
+    }
+
+    #[test]
+    fn seerr_url_is_normalized_and_validated() {
+        assert_eq!(parse_seerr_url("  "), Ok(None));
+        assert_eq!(
+            parse_seerr_url("http://seerr:5055/"),
+            Ok(Some("http://seerr:5055".to_string()))
+        );
+        assert!(parse_seerr_url("seerr:5055").is_err());
+        assert!(parse_seerr_url("ftp://seerr").is_err());
     }
 }

@@ -83,6 +83,10 @@ Jellyswarrm API key and discovers the merged Movies and Shows libraries through
 their virtual IDs. See
 [`SEERR-COMPATIBILITY.md`](SEERR-COMPATIBILITY.md) for the supported API surface.
 
+To test Moonfin's Seerr integration, enable Seerr in the admin settings with the
+URL `http://localhost:5055`. Then sign in to Seerr from a Moonfin client
+connected to the proxy.
+
 ## Commands
 
 Run `just` to list all commands. Common workflows are:
