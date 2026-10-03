@@ -9,7 +9,8 @@ use crate::{
     extractors::{Preprocessed, RequireSession},
     handlers::common::{
         execute_json_request, execute_processed_json_request, payload_from_request,
-        process_playback_response, remap_playback_request, set_json_body, track_playback_alias,
+        process_playback_response, remap_playback_request, restrict_direct_play_for_client,
+        set_json_body, track_playback_alias,
     },
     handlers::media_versions::{
         merge_media_detail, record_playback_sources, resolve_playback_route, DetailMergeContext,
@@ -203,6 +204,14 @@ pub async fn post_playback_info(
     }
 
     let mut payload = payload;
+
+    let client_name = preprocessed
+        .auth
+        .as_ref()
+        .and_then(|auth| auth.get_device(preprocessed.original_request.headers()))
+        .map(|device| device.client)
+        .unwrap_or_else(|| session.device.client.clone());
+    restrict_direct_play_for_client(&mut payload, Some(&client_name));
 
     let route = resolve_playback_route(
         &state,

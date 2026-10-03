@@ -247,6 +247,76 @@ pub async fn remap_playback_request(
     Ok(())
 }
 
+/// Containers the Android TV player advertises for direct play but can not
+/// actually play (XviD/AVI files with AC3 audio stop after a few seconds).
+const ANDROID_TV_UNPLAYABLE_CONTAINERS: &[&str] = &["avi", "xvid"];
+
+fn is_android_tv_client(client: &str) -> bool {
+    client.to_ascii_lowercase().contains("android tv")
+}
+
+fn get_ignore_ascii_case_mut<'a>(
+    object: &'a mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Option<&'a mut serde_json::Value> {
+    object
+        .iter_mut()
+        .find(|(name, _)| name.eq_ignore_ascii_case(key))
+        .map(|(_, value)| value)
+}
+
+/// Removes legacy containers from the video direct play profiles of Android TV
+/// clients, so the server remuxes/transcodes those files instead.
+pub fn restrict_direct_play_for_client(payload: &mut PlaybackRequest, client: Option<&str>) {
+    if !client.is_some_and(is_android_tv_client) {
+        return;
+    }
+
+    let Some(profiles) = payload
+        .device_profile
+        .as_mut()
+        .and_then(|profile| profile.as_object_mut())
+        .and_then(|profile| get_ignore_ascii_case_mut(profile, "DirectPlayProfiles"))
+        .and_then(|profiles| profiles.as_array_mut())
+    else {
+        return;
+    };
+
+    profiles.retain_mut(|profile| {
+        let Some(profile) = profile.as_object_mut() else {
+            return true;
+        };
+        let is_video = get_ignore_ascii_case_mut(profile, "Type")
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| value.eq_ignore_ascii_case("Video"));
+        if !is_video {
+            return true;
+        }
+        let Some(container) = get_ignore_ascii_case_mut(profile, "Container") else {
+            return true;
+        };
+        let Some(containers) = container.as_str() else {
+            return true;
+        };
+
+        let kept: Vec<&str> = containers
+            .split(',')
+            .map(str::trim)
+            .filter(|name| {
+                !name.is_empty()
+                    && !ANDROID_TV_UNPLAYABLE_CONTAINERS
+                        .iter()
+                        .any(|blocked| name.eq_ignore_ascii_case(blocked))
+            })
+            .collect();
+        if kept.is_empty() && !containers.trim().is_empty() {
+            return false;
+        }
+        *container = serde_json::Value::String(kept.join(","));
+        true
+    });
+}
+
 pub async fn process_playback_response(
     response: &mut PlaybackResponse,
     state: &AppState,
@@ -895,5 +965,102 @@ mod tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod direct_play_restriction_tests {
+    use serde_json::json;
+
+    use super::*;
+
+    fn request_with_profile(profile: serde_json::Value) -> PlaybackRequest {
+        serde_json::from_value(json!({
+            "UserId": "user",
+            "DeviceProfile": profile,
+        }))
+        .unwrap()
+    }
+
+    fn direct_play_profiles(request: &PlaybackRequest) -> Vec<serde_json::Value> {
+        request.device_profile.as_ref().unwrap()["DirectPlayProfiles"]
+            .as_array()
+            .unwrap()
+            .clone()
+    }
+
+    fn moonfin_profile() -> serde_json::Value {
+        json!({
+            "Name": "Moonfin for Android",
+            "DirectPlayProfiles": [
+                {
+                    "Type": "Video",
+                    "Container": "avi,dash,flv,hls,m4v,mkv,mov,mp4,ts,vob,webm,xvid",
+                    "AudioCodec": "aac,ac3",
+                    "VideoCodec": "h264,mpeg4",
+                },
+                {
+                    "Type": "Audio",
+                    "Container": "avi,mp3",
+                },
+            ],
+        })
+    }
+
+    #[test]
+    fn removes_avi_from_android_tv_video_profiles_only() {
+        let mut request = request_with_profile(moonfin_profile());
+
+        restrict_direct_play_for_client(&mut request, Some("Moonfin for Android TV"));
+
+        let profiles = direct_play_profiles(&request);
+        assert_eq!(
+            profiles[0]["Container"],
+            "dash,flv,hls,m4v,mkv,mov,mp4,ts,vob,webm"
+        );
+        assert_eq!(profiles[0]["AudioCodec"], "aac,ac3");
+        assert_eq!(profiles[1]["Container"], "avi,mp3");
+    }
+
+    #[test]
+    fn drops_video_profile_that_only_allowed_avi() {
+        let mut request = request_with_profile(json!({
+            "DirectPlayProfiles": [
+                { "Type": "Video", "Container": "AVI" },
+                { "Type": "Video", "Container": "mkv" },
+            ],
+        }));
+
+        restrict_direct_play_for_client(&mut request, Some("Jellyfin Android TV"));
+
+        let profiles = direct_play_profiles(&request);
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0]["Container"], "mkv");
+    }
+
+    #[test]
+    fn leaves_other_clients_untouched() {
+        for client in [Some("Moonfin for Android"), Some("Moonfin Desktop"), None] {
+            let mut request = request_with_profile(moonfin_profile());
+
+            restrict_direct_play_for_client(&mut request, client);
+
+            assert_eq!(request.device_profile.unwrap(), moonfin_profile());
+        }
+    }
+
+    #[test]
+    fn tolerates_missing_or_malformed_profiles() {
+        let mut no_profile: PlaybackRequest =
+            serde_json::from_value(json!({ "UserId": "user" })).unwrap();
+        restrict_direct_play_for_client(&mut no_profile, Some("Android TV"));
+        assert!(no_profile.device_profile.is_none());
+
+        let mut malformed = request_with_profile(json!({ "DirectPlayProfiles": "nope" }));
+        restrict_direct_play_for_client(&mut malformed, Some("Android TV"));
+        assert_eq!(
+            malformed.device_profile.unwrap(),
+            json!({ "DirectPlayProfiles": "nope" })
+        );
     }
 }
